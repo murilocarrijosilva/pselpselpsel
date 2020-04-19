@@ -14,9 +14,9 @@ TagManager:
   - 
   - 
   - scenario
-  - 
-  - 
-  - 
+  - shadow
+  - player
+  - lightsource
   - 
   - 
   - 
@@ -40,4 +40,19 @@ TagManager:
   m_SortingLayers:
   - name: Default
     uniqueID: 0
+    locked: 0
+  - name: background
+    uniqueID: 3967924129
+    locked: 0
+  - name: light
+    uniqueID: 2890879891
+    locked: 0
+  - name: foreground
+    uniqueID: 3565919779
+    locked: 0
+  - name: player
+    uniqueID: 3811523773
+    locked: 0
+  - name: ui
+    uniqueID: 1711396361
     locked: 0

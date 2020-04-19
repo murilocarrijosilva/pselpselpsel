@@ -4,14 +4,17 @@ using UnityEngine;
 
 [RequireComponent(typeof(BoxCollider2D))]
 [RequireComponent(typeof(Rigidbody2D))]
+[RequireComponent(typeof(Animator))]
 public class PlayerMovement : MonoBehaviour {
 
     BoxCollider2D _col;
     Rigidbody2D _rb2d;
+    SpriteRenderer _renderer;
+    Animator _anim;
 
-    public int collidableLayer;
-
-    float unitsPerPixel = 0.0625f;
+    public int _collidableLayer;
+    public int _shadowLayer;
+    float _unitsPerPixel = 1 / 16f;
 
     // Horizontal movement
     public float run_maxSpeed;
@@ -33,16 +36,26 @@ public class PlayerMovement : MonoBehaviour {
     float jmp_maxVelocity;
     float jmp_minVelocity;
 
-    bool m2_connected;
-    float m2_distanceFromContactPoint;
-    Vector2 m2_contactPoint;
+    // Animation aux
+    public GameObject anim_wandParticle;
+    public GameObject anim_jumpParticle;
+    public GameObject wand;
 
-    public GameObject zaHando;
-    GameObject zaHandoClone;
+    float anim_lastDirection = 0;
+    float anim_lastFrameAction;
+    float anim_midAir;
+    float anim_landed;
+    float anim_grounded;
+    float anim_lastFrameGrounded;
+
+    // Other stuff
+    public bool isInLight;
 
     void Start() {
         _col = GetComponent<BoxCollider2D>();
         _rb2d = GetComponent<Rigidbody2D>();
+        _renderer = GetComponent<SpriteRenderer>();
+        _anim = GetComponent<Animator>();
 
         // Setting up some constants
         _rb2d.gravityScale = jmp_gravity;
@@ -63,132 +76,139 @@ public class PlayerMovement : MonoBehaviour {
 
     void Update() {
         HandleMovement();
+        HandleAnimation();
+        CheckIfInLight();
+    }
+
+    void CheckIfInLight() {
+        isInLight = Physics2D.OverlapBox(transform.position, _col.size, 0, 1 << _shadowLayer);
+
+        if (isInLight)
+            _renderer.color = Color.white;
+        else
+            _renderer.color = new Color(72f/255f, 139f/255f, 212f/255f);
     }
 
     void HandleMovement() {
         float direction = Input.GetAxis("right") - Input.GetAxis("left");
-        bool grounded = CheckCollision(Vector3.down, jmp_maxDistanceGrounded, 1 << collidableLayer);
-        
-        // Which wall player is against so velocity is correctly apllied
-        int againstWall = 0;
-        if (CheckCollision(Vector3.left, jmp_maxDistanceWallJump, 1 << collidableLayer))
-            againstWall = 1;
-        else if (CheckCollision(Vector3.right, jmp_maxDistanceWallJump, 1 << collidableLayer))
-            againstWall = -1;
+        bool grounded = CheckCollision(Vector3.down, jmp_maxDistanceGrounded, 1 << _collidableLayer);
+        Vector2 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        Vector3 normalized = new Vector2(transform.position.x - mousePos.x, transform.position.y - mousePos.y).normalized;
+
+        //// Which wall player is against so velocity is correctly apllied
+        //int againstWall = 0;
+        //if (CheckCollision(Vector3.left, jmp_maxDistanceWallJump, 1 << _collidableLayer))
+        //    againstWall = 1;
+        //else if (CheckCollision(Vector3.right, jmp_maxDistanceWallJump, 1 << _collidableLayer))
+        //    againstWall = -1;
+
+        wand.GetComponentInParent<Transform>().localPosition = normalized * -1;
+        wand.transform.rotation = Quaternion.Euler(0, 0, Mathf.Atan((normalized * -1).y / (normalized * -1).x) * Mathf.Rad2Deg);
 
         // Run
         if (Input.GetButton("right") || Input.GetButton("left")) {
-            float newVelocityX = grounded ? run_acceleration * direction * Time.deltaTime : run_acceleration * run_airAccelerationFactor * direction * Time.deltaTime;
-            _rb2d.velocity = new Vector2(Mathf.Clamp(_rb2d.velocity.x + newVelocityX, -run_maxSpeed, run_maxSpeed), _rb2d.velocity.y);
+            float newVelocityX = grounded ? _rb2d.velocity.x + run_acceleration * direction * Time.deltaTime : _rb2d.velocity.x + run_acceleration * run_airAccelerationFactor * direction * Time.deltaTime;
+            _rb2d.velocity = new Vector2(Mathf.Clamp(newVelocityX, -run_maxSpeed, run_maxSpeed), _rb2d.velocity.y);
         }
-        if ((direction == 0 || GetSign(direction) != GetSign(_rb2d.velocity.x)) && grounded) {
+        if ((direction == 0 || GetSign(direction) != GetSign(_rb2d.velocity.x))) {
             float newVelocityX = _rb2d.velocity.x + (-GetSign(_rb2d.velocity.x) * run_deacceleration * Time.deltaTime);
+            if (!grounded)
+                newVelocityX = _rb2d.velocity.x + (-GetSign(_rb2d.velocity.x) * run_deacceleration * run_airAccelerationFactor * Time.deltaTime);
             newVelocityX = _rb2d.velocity.x > 0 ? Mathf.Max(newVelocityX, 0f) : Mathf.Min(newVelocityX, 0f);
-            _rb2d.velocity = new Vector2(newVelocityX, _rb2d.velocity.y);
+            _rb2d.velocity = new Vector2(Mathf.Clamp(newVelocityX, -run_maxSpeed, run_maxSpeed), _rb2d.velocity.y);
         }
 
         // Jump + mouse1 dash
-
         if (Input.GetButtonDown("jump"))
             jmp_buffer = jmp_maxBufferTime;
 
         if (jmp_buffer > 0 && grounded) {
             _rb2d.velocity = new Vector2(_rb2d.velocity.x, jmp_maxVelocity);
             jmp_buffer = 0;
+
+            GameObject poof = Instantiate(anim_jumpParticle, transform.position + Vector3.down * _col.bounds.extents.y, Quaternion.Euler(-90f, 90f, 0f));
+            Destroy(poof, 0.3f);
         }
 
-        if (jmp_buffer > 0 && !grounded && againstWall != 0) {
-            _rb2d.velocity = new Vector2(Mathf.Clamp(Mathf.Cos(Mathf.Deg2Rad * jmp_wallJumpAngle) * againstWall, -run_maxSpeed, run_maxSpeed), Mathf.Sin(Mathf.Deg2Rad * jmp_wallJumpAngle)) * jmp_maxVelocity;
-            jmp_buffer = 0;
-        }
+        //if (jmp_buffer > 0 && !grounded && againstWall != 0) {
+        //    _rb2d.velocity = new Vector2(Mathf.Clamp(Mathf.Cos(Mathf.Deg2Rad * jmp_wallJumpAngle) * againstWall, -run_maxSpeed, run_maxSpeed), Mathf.Sin(Mathf.Deg2Rad * jmp_wallJumpAngle)) * jmp_maxVelocity;
+        //    jmp_buffer = 0;
+        //}
+
+        // Mouse 1
 
         if (Input.GetButtonDown("mouse1")) {
-            Vector2 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-            Vector3 normalized = new Vector2(transform.position.x - mousePos.x, transform.position.y - mousePos.y).normalized;
+            Camera.main.GetComponent<PlayerCamera>().DashTrauma();
+            float rotation = normalized.x > 0 ? 180 - wand.transform.rotation.eulerAngles.z : -wand.transform.rotation.eulerAngles.z;
+            GameObject poof = Instantiate(anim_wandParticle, wand.transform.position, Quaternion.Euler(rotation, 90f, 0f));
+            Destroy(poof, 0.3f);
+
             _rb2d.velocity = new Vector2(normalized.x * jmp_maxVelocity + _rb2d.velocity.x, normalized.y * jmp_maxVelocity);
-        }
+            Collider2D[] pushablesInRange = Physics2D.OverlapBoxAll(transform.position + normalized * -1, Vector2.one * 2, 0);
+            if (pushablesInRange.Length > 0) {
+                foreach (Collider2D obj in pushablesInRange) {
+                    if (obj.gameObject.GetComponent<PushableObject>() != null)
+                        obj.gameObject.GetComponent<PushableObject>().PushBack(normalized * -1, 20f);
 
-        //if (Input.GetButtonDown("mouse2")) {
-        //    Vector2 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-        //    Vector3 normalized = new Vector2(mousePos.x - transform.position.x, mousePos.y - transform.position.y).normalized;
-
-        //    zaHandoClone = Instantiate(zaHando, transform.position, Quaternion.identity);
-        //    zaHandoClone.GetComponent<Rigidbody2D>().gravityScale = jmp_gravity;
-
-        //    zaHandoClone.GetComponent<Rigidbody2D>().velocity = normalized * 30f;
-        //}
-
-        //if (Input.GetButtonUp("mouse2")) {
-        //    Destroy(zaHandoClone);
-        //}
-
-        if (Input.GetButtonDown("mouse2")) {
-            Vector2 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-            Vector3 normalized = new Vector2(mousePos.x - transform.position.x, mousePos.y - transform.position.y).normalized;
-            RaycastHit2D hit = Physics2D.Raycast(transform.position, normalized, 100f, 1 << collidableLayer);
-
-            if (m2_connected = hit) {
-                m2_contactPoint = hit.point;
-                m2_distanceFromContactPoint = Vector2.Distance(transform.position, m2_contactPoint);
+                    if (obj.gameObject.GetComponent<Extinguishable>() != null) {
+                        obj.gameObject.GetComponent<Extinguishable>().Extinguish();
+                    }
+                        
+                }
             }
-
         }
-
-        if (m2_connected) {
-            GetComponent<SpringJoint2D>().enabled = true;
-            GetComponent<SpringJoint2D>().enableCollision = true;
-            GetComponent<SpringJoint2D>().autoConfigureDistance = false;
-            GetComponent<SpringJoint2D>().anchor = Vector2.zero;
-            GetComponent<SpringJoint2D>().connectedAnchor = m2_contactPoint;
-            GetComponent<SpringJoint2D>().distance = m2_distanceFromContactPoint;
-        }
-
-        if (Input.GetButtonUp("mouse2")) {
-            m2_connected = false;
-            GetComponent<SpringJoint2D>().enabled = false;
-        }
-
-
-        //if (Input.GetButtonDown("mouse2")) {
-        //    Vector2 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-        //    Vector3 normalized = new Vector2(mousePos.x - transform.position.x, mousePos.y - transform.position.y).normalized;
-        //    RaycastHit2D hit = Physics2D.Raycast(transform.position, normalized, 100f, 1 << collidableLayer);
-
-        //    if (connected = hit) {
-        //        contactPoint = hit.point;
-        //        mouseStartPos = Input.mousePosition;
-        //    }
-        //}
-
-        //if (Input.GetButtonUp("mouse2"))
-        //    connected = false;
-
-        //if (connected) {
-        //    Vector2 mousePos = Input.mousePosition;
-        //    Vector2 distanceFromContact = new Vector2(mousePos.x - mouseStartPos.x, mousePos.y - mouseStartPos.y);
-
-        //    Vector2 teste = new Vector2(contactPoint.x - transform.position.x, contactPoint.y - transform.position.y);
-        //    Vector2 perpendicular = Vector2.Perpendicular(teste).normalized;
-
-        //    _rb2d.velocity = Vector2.Dot(_rb2d.velocity, perpendicular) * perpendicular;
-
-        //    Debug.DrawLine(transform.position, teste.normalized + (Vector2) transform.position);
-        //    Debug.DrawLine(transform.position, _rb2d.velocity.normalized + (Vector2)transform.position, Color.cyan);
-        //}
-
-        //Debug.Log(_rb2d.velocity);
 
         jmp_buffer = Mathf.Clamp(jmp_buffer - Time.deltaTime, 0, jmp_maxBufferTime);
-
-    }
-
-    void CorrectVelocity() {
-
     }
     
+    void HandleAnimation() {
+        int direction = GetSign(Input.GetAxis("right") - Input.GetAxis("left"));
+        bool grounded = CheckCollision(Vector3.down, jmp_maxDistanceGrounded, 1 << _collidableLayer);
+
+        if (direction != anim_lastDirection && direction != 0 && GetSign(direction) == GetSign(_rb2d.velocity.x)) {
+            _anim.SetBool("facingRight", direction == 1);
+            _anim.SetBool("facingLeft", direction == -1);
+            _anim.SetTrigger("changedAction");
+            anim_lastDirection = direction;
+        }
+
+        if (_rb2d.velocity.x != 0 && !_anim.GetBool("running") && grounded) {
+            AnimResetState();
+            _anim.SetBool("running", true);
+            _anim.SetTrigger("changedAction");
+        }
+
+        if (_rb2d.velocity.x == 0 && !_anim.GetBool("idle") && grounded) {
+            AnimResetState();
+            _anim.SetBool("idle", true);
+            _anim.SetTrigger("changedAction");
+        }
+
+        if (!grounded) {
+            AnimResetState();
+            _anim.SetBool("jumping", true);
+            _anim.SetTrigger("changedAction");
+        }
+
+    }
+
+    void AnimResetState() {
+        _anim.SetBool("running", false);
+        _anim.SetBool("idle", false);
+        _anim.SetBool("jumping", false);
+    }
+
+    void OnDrawGizmos() {
+        Vector2 mousePos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        Vector3 normalized = new Vector2(transform.position.x - mousePos.x, transform.position.y - mousePos.y).normalized * -1;
+
+        Gizmos.DrawWireCube(transform.position + normalized, Vector2.one * 2);
+        Gizmos.DrawLine(transform.position, transform.position + normalized);
+    }
+
     // Used to check if player is grounded or against wall or really touching anything in any direction
     bool CheckCollision(Vector3 direction, float distanceInPixels, int collisionMask) {
-        float distance = Mathf.Abs((_col.bounds.extents.x * direction.x) + (_col.bounds.extents.y * direction.y)) + (distanceInPixels * unitsPerPixel);
+        float distance = Mathf.Abs((_col.bounds.extents.x * direction.x) + (_col.bounds.extents.y * direction.y)) + (distanceInPixels * _unitsPerPixel);
 
         Vector3 origin_0 = _col.bounds.center;
         Vector3 origin_1 = new Vector2(_col.bounds.center.x + (direction.y * _col.bounds.extents.x), _col.bounds.center.y + (direction.x * _col.bounds.extents.y));
@@ -206,7 +226,7 @@ public class PlayerMovement : MonoBehaviour {
     }
 
     // Mathf.Sign() returns positive for zero and that breaks how deacceleration is handled
-    float GetSign(float num) {
+    int GetSign(float num) {
         if (num > 0)
             return 1;
         if (num < 0)
