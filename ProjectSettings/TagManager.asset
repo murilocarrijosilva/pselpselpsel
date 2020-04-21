@@ -17,8 +17,8 @@ TagManager:
   - shadow
   - player
   - lightsource
-  - 
-  - 
+  - enemiesFov
+  - exit
   - 
   - 
   - 
